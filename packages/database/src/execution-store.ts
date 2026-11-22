@@ -65,6 +65,14 @@ export class InMemoryExecutionStore implements ExecutionStore {
       .slice(safeOffset, safeOffset + clampLimit(limit, MAX_LIMIT));
   }
 
+  async listByActivity(agentId: string, activityId: string, limit = MAX_LIMIT, offset = 0): Promise<ExecutionRecord[]> {
+    const safeOffset = clampOffset(offset);
+    return [...this.records.values()]
+      .filter((r) => r.agentId === agentId && r.activityId === activityId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(safeOffset, safeOffset + clampLimit(limit, MAX_LIMIT));
+  }
+
   async listStuckExecuting(limit = MAX_LIMIT): Promise<ExecutionRecord[]> {
     return [...this.records.values()]
       .filter((r) => r.status === "executing")
@@ -375,6 +383,15 @@ export class SQLiteExecutionStore implements ExecutionStore {
     const rows = this.db
       .prepare("SELECT * FROM executions WHERE agent_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?")
       .all(agentId, safeLimit, safeOffset) as unknown as ExecutionRow[];
+    return rows.map(rowToExecutionRecord);
+  }
+
+  async listByActivity(agentId: string, activityId: string, limit = MAX_LIMIT, offset = 0): Promise<ExecutionRecord[]> {
+    const safeLimit = clampLimit(limit, MAX_LIMIT);
+    const safeOffset = clampOffset(offset);
+    const rows = this.db
+      .prepare("SELECT * FROM executions WHERE agent_id = ? AND activity_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?")
+      .all(agentId, activityId, safeLimit, safeOffset) as unknown as ExecutionRow[];
     return rows.map(rowToExecutionRecord);
   }
 

@@ -233,10 +233,15 @@ export const api = {
       `/activity?limit=${limit}&offset=${offset}`
     ),
 
-  listAgentExecutions: (agentId: string, limit = 50, offset = 0) =>
-    request<{ agentId: string; executions: ExecutionRecord[]; hasMore: boolean }>(
-      `/agents/${encodeURIComponent(agentId)}/executions?limit=${limit}&offset=${offset}`
-    ),
+  listAgentExecutions: (agentId: string, limit = 50, offset = 0, activityId?: string) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    params.set('offset', String(offset));
+    if (activityId) params.set('activityId', activityId);
+    return request<{ agentId: string; executions: ExecutionRecord[]; hasMore: boolean }>(
+      `/agents/${encodeURIComponent(agentId)}/executions?${params}`
+    );
+  },
 
   getExecution: (executionId: string) =>
     request<{ execution: ExecutionRecord }>(`/executions/${encodeURIComponent(executionId)}`),

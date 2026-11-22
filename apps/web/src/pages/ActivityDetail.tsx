@@ -11,6 +11,7 @@ export default function ActivityDetail() {
   const navigate = useNavigate();
   const [activity, setActivity] = useState<ActivityRecord | null>(null);
   const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
+  const [executionsStatus, setExecutionsStatus] = useState<'loading' | 'done' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
@@ -21,14 +22,25 @@ export default function ActivityDetail() {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setExecutionsStatus('loading');
     api.activityDetail(agentId, activityId)
       .then((r) => {
         if (cancelled) return;
         setActivity(r.activity);
         if (r.activity) {
-          api.listAgentExecutions(agentId)
-            .then((r2) => setExecutions(r2.executions.filter((e: ExecutionRecord) => e.activityId === activityId)))
-            .catch(() => {});
+          // Pass activityId so the server filters server-side — avoids the
+          // first-50-only truncation that caused silent misses (#382).
+          api.listAgentExecutions(agentId, 50, 0, activityId)
+            .then((r2) => {
+              if (cancelled) return;
+              setExecutions(r2.executions);
+              setExecutionsStatus('done');
+            })
+            .catch(() => {
+              if (!cancelled) setExecutionsStatus('error');
+            });
+        } else {
+          setExecutionsStatus('done');
         }
       })
       .catch((e: any) => {
@@ -151,6 +163,18 @@ export default function ActivityDetail() {
               ))}
             </tbody>
           </table>
+        </Section>
+      )}
+
+      {executions.length === 0 && executionsStatus === 'done' && (
+        <Section title="Related Executions">
+          <p className="muted" data-testid="no-executions-message">No executions found for this activity.</p>
+        </Section>
+      )}
+
+      {executionsStatus === 'error' && (
+        <Section title="Related Executions">
+          <p className="muted" data-testid="executions-error-message">Could not load executions. The lookup did not complete.</p>
         </Section>
       )}
     </section>

@@ -62,6 +62,11 @@ export interface ExecutionStore {
   listDue(before: string, limit?: number): Promise<ExecutionRecord[]>;
   listByOwner(ownerId: string, limit?: number, offset?: number): Promise<ExecutionRecord[]>;
   listByAgent(agentId: string, limit?: number, offset?: number): Promise<ExecutionRecord[]>;
+  /**
+   * Find all executions for a specific activity within an agent.
+   * Used by ActivityDetail to avoid client-side filtering over a truncated page (#382).
+   */
+  listByActivity(agentId: string, activityId: string, limit?: number, offset?: number): Promise<ExecutionRecord[]>;
   listStuckExecuting(limit?: number): Promise<ExecutionRecord[]>;
   listSubmitted(limit?: number): Promise<ExecutionRecord[]>;
   /** Count executions grouped by status for an owner. */

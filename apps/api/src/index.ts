@@ -1689,6 +1689,14 @@ export async function createApiServer(options: ServerOptions) {
     if (!allowed) return apiError(res, "AGENT_NOT_FOUND");
     const limit = Math.max(1, Math.min(100, Number(urlObj.searchParams.get("limit") ?? 50) || 50));
     const offset = Math.max(0, Number(urlObj.searchParams.get("offset") ?? 0) || 0);
+    const activityId = urlObj.searchParams.get("activityId") ?? null;
+    if (activityId) {
+      // Server-side filter: return only executions for this activity (#382).
+      // listByActivity is bounded by limit so the total fetch is always finite.
+      const executions = await executionStore.listByActivity(agentId, activityId, limit, offset);
+      const hasMore = false; // activity-scoped results are small; expose paging if needed later
+      return json(res, { agentId, executions, hasMore });
+    }
     const all = await executionStore.listByAgent(agentId, limit + 1, offset);
     const executions = all.slice(0, limit);
     const hasMore = all.length > limit && !isOffsetAtCeiling(offset);

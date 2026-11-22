@@ -42,6 +42,30 @@ function makeActivity(): any {
   };
 }
 
+function makeExecution(id: string, activityId = 'act-1'): any {
+  return {
+    id,
+    agentId: 'agent-a',
+    ownerId: 'owner-a',
+    activityId,
+    status: 'confirmed',
+    intent: { type: 'payment', asset: 'XLM', amount: '50', destination: 'G...', reason: 'test' },
+    policyDecision: null,
+    simulationResult: null,
+    txHash: null,
+    submittedHash: null,
+    approvalId: null,
+    error: null,
+    attempt: 1,
+    nextRetryAt: null,
+    startedAt: null,
+    completedAt: null,
+    errorClass: null,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:01:00Z',
+  };
+}
+
 describe('ActivityDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -116,4 +140,53 @@ describe('ActivityDetail', () => {
     });
     expect(screen.getByText('Transaction failed: insufficient funds')).toBeInTheDocument();
   });
+
+  it('passes activityId as a query param so the server filters server-side', async () => {
+    mockApi.activityDetail.mockResolvedValue({ activity: makeActivity() });
+    renderDetail();
+    await waitFor(() => {
+      expect(mockApi.listAgentExecutions).toHaveBeenCalledWith('agent-a', 50, 0, 'act-1');
+    });
+  });
+
+  it('shows the execution when it is returned by a server-side filtered query (beyond-first-page scenario)', async () => {
+    // The server now filters by activityId, so the response contains only the
+    // matching execution regardless of its position in the full list. This test
+    // simulates an agent with >50 executions where the matching execution is
+    // older than the 50 most recently updated — the old client-side filter
+    // would have silently missed it; the server-side filter returns it directly.
+    const matchingExecution = makeExecution('exec-60', 'act-1');
+    mockApi.activityDetail.mockResolvedValue({ activity: makeActivity() });
+    mockApi.listAgentExecutions.mockResolvedValue({
+      executions: [matchingExecution], // server already filtered — only the match is returned
+      hasMore: false,
+    });
+    renderDetail();
+    await waitFor(() => {
+      // The execution ID prefix appears in the Related Executions table
+      expect(screen.getByText('exec-60'.slice(0, 8))).toBeInTheDocument();
+    });
+    expect(screen.getByText('Related Executions (1)')).toBeInTheDocument();
+  });
+
+  it('shows explicit "no executions" message when the lookup completes with no results', async () => {
+    mockApi.activityDetail.mockResolvedValue({ activity: makeActivity() });
+    mockApi.listAgentExecutions.mockResolvedValue({ executions: [], hasMore: false });
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('no-executions-message')).toBeInTheDocument();
+    });
+    expect(screen.getByText('No executions found for this activity.')).toBeInTheDocument();
+  });
+
+  it('shows error message when executions lookup fails', async () => {
+    mockApi.activityDetail.mockResolvedValue({ activity: makeActivity() });
+    mockApi.listAgentExecutions.mockRejectedValue(new Error('Network error'));
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('executions-error-message')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Could not load executions. The lookup did not complete.')).toBeInTheDocument();
+  });
 });
+
