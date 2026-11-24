@@ -43,6 +43,15 @@ indicating how many seconds to wait before retrying:
 {"code":"RATE_LIMITED","error":"rate_limited"}
 ```
 
+The authenticated, money-moving endpoints have their own per-owner limit
+(#261): `POST /agents/:id/intents` and the approve / reject actions. Each
+endpoint has a separate budget (60 requests per owner per 60 seconds by
+default), so intent traffic cannot lock an owner out of approvals. Past the
+limit the endpoint returns the same `429` with `Retry-After` and the
+`RATE_LIMITED` envelope as the auth gate. Limits are per owner, never global
+across owners, and are configurable with `API_RATE_LIMIT_MAX`,
+`API_RATE_LIMIT_WINDOW_SECONDS` and `API_RATE_LIMIT_MAX_KEYS`.
+
 ### GET /auth/config
 
 Public. Returns which login methods the server has enabled:

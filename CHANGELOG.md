@@ -5,6 +5,7 @@ All notable changes to this project are recorded in this file.
 ## [Unreleased]
 
 ### Security
+- Per-owner rate limiting on the authenticated intent and approval-action endpoints (`POST /agents/:id/intents`, approve, reject), reusing `SlidingWindowRateLimiter`; separate budget per endpoint, 429 with `Retry-After` and the `RATE_LIMITED` envelope, limits configurable via `API_RATE_LIMIT_*` (#261)
 - Stellar network safety guard validating Horizon URL + passphrase, rejecting mainnet execution (Phase 21)
 - Live submission gate requiring explicit `LIVE_SUBMIT=1` opt-in before real Testnet submission (Phase 21)
 - Atomic daily spending reservation via dedicated `daily_spending` table with conditional SQL updates (Phase 23)
