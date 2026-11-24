@@ -462,7 +462,9 @@ Returns `{ "agentId", "approvals": ApprovalRecord[] }`.
 ### GET /agents/:id/activity
 
 List activity records for an agent (owner-scoped).
-Query: `?limit=` (default 50, clamped 1–100).
+Query: `?limit=` (default 50, clamped 1–100), `?status=` optional filter
+(`pending`, `rejected`, `requires_approval`, `approved`, `signed`, `submitted`,
+`failed`); an invalid status returns `400 VALIDATION_ERROR`.
 Returns `{ "agentId", "activity": ActivityRecord[] }`.
 
 ### GET /agents/:id/activity/:activityId
@@ -576,7 +578,9 @@ validator's error message. `201` → `{ "schedule": ScheduleRecord }`.
 ### GET /agents/:id/schedules
 
 List schedules for an agent (owner-scoped). Query: `?limit=`
-(default 50, clamped 1–100). Returns `{ "agentId", "schedules": [] }`.
+(default 50, clamped 1–100), `?status=` optional filter (`active`, `paused`,
+`disabled`); an invalid status returns `400 VALIDATION_ERROR`.
+Returns `{ "agentId", "schedules": [] }`.
 
 ### GET /agents/:id/schedules/:scheduleId
 
@@ -704,6 +708,7 @@ Query parameters:
 | Parameter | Default | Max | Description |
 |---|---|---|---|
 | `limit` | `50` | `100` | Maximum number of records to return. Values outside 1–100 are clamped. |
+| `status` | — | — | Optional filter (`pending`, `rejected`, `requires_approval`, `approved`, `signed`, `submitted`, `failed`). An invalid status returns `400 VALIDATION_ERROR`. |
 
 Response `200`:
 

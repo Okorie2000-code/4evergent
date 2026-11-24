@@ -32,10 +32,13 @@ export {
 export interface ActivityStore {
   record(record: ActivityRecord): Promise<void>;
   get(id: string): Promise<ActivityRecord | null>;
-  listByAgent(agentId: string, limit?: number, offset?: number): Promise<ActivityRecord[]>;
+  /** List activity for an agent. `status` filters at the store level so that
+   *  `offset`/`limit` page over the FILTERED set, not the unfiltered one. */
+  listByAgent(agentId: string, limit?: number, offset?: number, status?: string): Promise<ActivityRecord[]>;
   listByStatus(agentId: string, status: string, limit?: number, offset?: number): Promise<ActivityRecord[]>;
   listAll(limit?: number, offset?: number): Promise<ActivityRecord[]>;
-  listByOwner(ownerId: string, limit?: number, offset?: number): Promise<ActivityRecord[]>;
+  /** List activity for an owner. `status` filters at the store level (see listByAgent). */
+  listByOwner(ownerId: string, limit?: number, offset?: number, status?: string): Promise<ActivityRecord[]>;
   getForOwner(id: string, ownerId: string): Promise<ActivityRecord | null>;
   update(id: string, patch: Partial<ActivityRecord>): Promise<ActivityRecord | null>;
   getByIdempotencyKey(ownerId: string, agentId: string, key: string): Promise<ActivityRecord | null>;
@@ -175,9 +178,9 @@ export class InMemoryActivityStore implements ActivityStore {
     return this.records.get(id) ?? null;
   }
 
-  async listByAgent(agentId: string, limit = 50, offset = 0): Promise<ActivityRecord[]> {
+  async listByAgent(agentId: string, limit = 50, offset = 0, status?: string): Promise<ActivityRecord[]> {
     return [...this.records.values()]
-      .filter((r) => r.agentId === agentId)
+      .filter((r) => r.agentId === agentId && (status === undefined || r.status === status))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(clampOffset(offset), clampOffset(offset) + clampLimit(limit));
   }
@@ -195,9 +198,9 @@ export class InMemoryActivityStore implements ActivityStore {
       .slice(clampOffset(offset), clampOffset(offset) + clampLimit(limit));
   }
 
-  async listByOwner(ownerId: string, limit = 50, offset = 0): Promise<ActivityRecord[]> {
+  async listByOwner(ownerId: string, limit = 50, offset = 0, status?: string): Promise<ActivityRecord[]> {
     return [...this.records.values()]
-      .filter((r) => r.ownerId === ownerId)
+      .filter((r) => r.ownerId === ownerId && (status === undefined || r.status === status))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(clampOffset(offset), clampOffset(offset) + clampLimit(limit));
   }

@@ -3,9 +3,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createRequire } from "node:module";
 import { log, generateRequestId, runRequestIdContext } from "./logging.js";
 import type {
+  ActivityStatus,
   AgentIntent,
   AuthorizationStatus,
   PolicyDecision,
+  ScheduleStatus,
   SimulationResult,
 } from "@4evergent/shared";
 import { toStroops, fromStroops } from "@4evergent/shared";
@@ -135,6 +137,18 @@ const APPROVAL_STATUSES = [
   "confirmed",
   "failed",
 ] as const satisfies readonly ApprovalStatus[];
+
+const SCHEDULE_STATUSES = ["active", "paused", "disabled"] as const satisfies readonly ScheduleStatus[];
+
+const ACTIVITY_STATUSES = [
+  "pending",
+  "rejected",
+  "requires_approval",
+  "approved",
+  "signed",
+  "submitted",
+  "failed",
+] as const satisfies readonly ActivityStatus[];
 
 function parseStatusFilter<T extends string>(
   raw: string | null,
@@ -1508,9 +1522,14 @@ export async function createApiServer(options: ServerOptions) {
     if (!agentId) return apiError(res, "INVALID_PATH_PARAM");
     const allowed = await authorizationService.canAccessAgent(ctx, agentId);
     if (!allowed) return apiError(res, "AGENT_NOT_FOUND");
+    const statusFilter = parseStatusFilter(urlObj.searchParams.get("status"), ACTIVITY_STATUSES);
+    if (!statusFilter.ok) return apiError(res, "VALIDATION_ERROR", { message: statusFilter.error });
     const limit = Math.max(1, Math.min(100, Number(urlObj.searchParams.get("limit") ?? 50) || 50));
     const offset = Math.max(0, Number(urlObj.searchParams.get("offset") ?? 0) || 0);
-    const all = await store.listByAgent(agentId, limit + 1, offset);
+    const all =
+      statusFilter.status === undefined
+        ? await store.listByAgent(agentId, limit + 1, offset)
+        : await store.listByStatus(agentId, statusFilter.status, limit + 1, offset);
     const activity = all.slice(0, limit);
     const hasMore = all.length > limit && !isOffsetAtCeiling(offset);
     return json(res, { agentId, activity, hasMore });
@@ -1737,9 +1756,11 @@ export async function createApiServer(options: ServerOptions) {
     if (!agentId) return apiError(res, "INVALID_PATH_PARAM");
     const allowed = await authorizationService.canAccessAgent(ctx, agentId);
     if (!allowed) return apiError(res, "AGENT_NOT_FOUND");
+    const statusFilter = parseStatusFilter(urlObj.searchParams.get("status"), SCHEDULE_STATUSES);
+    if (!statusFilter.ok) return apiError(res, "VALIDATION_ERROR", { message: statusFilter.error });
     const limit = Math.max(1, Math.min(100, Number(urlObj.searchParams.get("limit") ?? 50) || 50));
     const offset = Math.max(0, Number(urlObj.searchParams.get("offset") ?? 0) || 0);
-    const all = await schedules.listByAgent(agentId, limit + 1, offset);
+    const all = await schedules.listByAgent(agentId, limit + 1, offset, statusFilter.status);
     const page = all.slice(0, limit);
     const hasMore = all.length > limit && !isOffsetAtCeiling(offset);
     return json(res, { agentId, schedules: page, hasMore });
@@ -2055,9 +2076,11 @@ export async function createApiServer(options: ServerOptions) {
 
   async function handleListActivity(ctx: RequestContext, req: any, res: any) {
     const urlObj = new URL(req.url ?? "", "http://localhost");
+    const statusFilter = parseStatusFilter(urlObj.searchParams.get("status"), ACTIVITY_STATUSES);
+    if (!statusFilter.ok) return apiError(res, "VALIDATION_ERROR", { message: statusFilter.error });
     const limit = Math.max(1, Math.min(100, Number(urlObj.searchParams.get("limit") ?? 50) || 50));
     const offset = Math.max(0, Number(urlObj.searchParams.get("offset") ?? 0) || 0);
-    const all = await store.listByOwner(ctx.ownerId!, limit + 1, offset);
+    const all = await store.listByOwner(ctx.ownerId!, limit + 1, offset, statusFilter.status);
     const activity = all.slice(0, limit);
     const hasMore = all.length > limit && !isOffsetAtCeiling(offset);
     return json(res, { activity, hasMore });
