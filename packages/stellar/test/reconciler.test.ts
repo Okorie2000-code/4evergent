@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TransactionStatusReconciler } from "../src/reconciler.js";
+import { TransactionStatusReconciler, FAILED_ACTIVITY_AMBIGUOUS_MARKER } from "../src/reconciler.js";
 import { InMemoryExecutionStore, InMemoryActivityStore, InMemoryApprovalStore } from "@4evergent/database";
 import type { ExecutionRecord, ActivityRecord, ApprovalRecord } from "@4evergent/database";
 
@@ -712,4 +712,243 @@ test("Reconciler #363: discovers linked activity from approval when execution.ac
   const updatedApproval = await approvalStore.get(approval.id);
   assert.equal(updatedApproval?.status, "failed");
   assert.equal(updatedApproval?.error, "Transaction failed on-chain");
+});
+
+// ---- Issue #277: reconcile failed activities carrying a txHash ----
+
+function makeFailedActivityReconciler(
+  activityStore: InMemoryActivityStore,
+  provider: { getStatus(txHash: string): Promise<"confirmed" | "failed" | "not_found" | "network_error"> },
+  extra: { approvalStore?: InMemoryApprovalStore } = {}
+) {
+  const executionStore = new InMemoryExecutionStore();
+  const reconciler = new TransactionStatusReconciler(executionStore, provider, {
+    activityStore,
+    approvalStore: extra.approvalStore,
+  });
+  return { executionStore, reconciler };
+}
+
+test("Reconciler #277: failed + confirmed → submitted (landed after timeout)", async () => {
+  const activityStore = new InMemoryActivityStore();
+  const activity = makeActivity({
+    status: "failed",
+    txHash: "tx-277-landed",
+    error: "Horizon timeout",
+  });
+  await activityStore.record(activity);
+
+  const provider = { getStatus: async () => "confirmed" as const };
+  const { executionStore, reconciler } = makeFailedActivityReconciler(activityStore, provider);
+
+  const result = await reconciler.reconcileFailedActivities();
+  assert.equal(result.checked, 1);
+  assert.equal(result.corrected, 1);
+  assert.equal(result.ambiguous, 0);
+  assert.equal(result.errors, 0);
+
+  const updated = await activityStore.get(activity.id);
+  assert.equal(updated?.status, "submitted");
+  assert.equal(updated?.txHash, "tx-277-landed");
+  // The audit trail is preserved: the original submit error stays, with
+  // the correction noted alongside it.
+  assert.match(updated?.error ?? "", /Horizon timeout/);
+  assert.match(updated?.error ?? "", /confirmed on-chain/);
+
+  // The pass never creates executions or approvals: read-only correction.
+  assert.equal((await executionStore.listSubmitted()).length, 0);
+});
+
+test("Reconciler #277: failed + not_found → stays failed with ambiguity marker, re-run is a no-op", async () => {
+  const activityStore = new InMemoryActivityStore();
+  const activity = makeActivity({
+    status: "failed",
+    txHash: "tx-277-unknown",
+    error: "Horizon timeout",
+  });
+  await activityStore.record(activity);
+
+  const provider = { getStatus: async () => "not_found" as const };
+  const { reconciler } = makeFailedActivityReconciler(activityStore, provider);
+
+  const first = await reconciler.reconcileFailedActivities();
+  assert.equal(first.checked, 1);
+  assert.equal(first.ambiguous, 1);
+  assert.equal(first.corrected, 0);
+
+  const afterFirst = await activityStore.get(activity.id);
+  assert.equal(afterFirst?.status, "failed");
+  assert.equal(afterFirst?.txHash, "tx-277-unknown");
+  assert.ok((afterFirst?.error ?? "").includes(FAILED_ACTIVITY_AMBIGUOUS_MARKER));
+  assert.match(afterFirst?.error ?? "", /Horizon timeout/);
+
+  // Second run: the marker is already there, so nothing is written again.
+  const second = await reconciler.reconcileFailedActivities();
+  assert.equal(second.checked, 1);
+  assert.equal(second.ambiguous, 0);
+  const afterSecond = await activityStore.get(activity.id);
+  assert.equal(afterSecond?.error, afterFirst?.error);
+});
+
+test("Reconciler #277: failed + network_error → unchanged, retried later", async () => {
+  const activityStore = new InMemoryActivityStore();
+  const activity = makeActivity({
+    status: "failed",
+    txHash: "tx-277-flaky",
+    error: "Horizon timeout",
+  });
+  await activityStore.record(activity);
+
+  let next: "confirmed" | "failed" | "not_found" | "network_error" = "network_error";
+  const provider = { getStatus: async () => next };
+  const { reconciler } = makeFailedActivityReconciler(activityStore, provider);
+
+  const first = await reconciler.reconcileFailedActivities();
+  assert.equal(first.checked, 1);
+  assert.equal(first.corrected, 0);
+  assert.equal(first.ambiguous, 0);
+  assert.equal(first.errors, 0);
+
+  const untouched = await activityStore.get(activity.id);
+  assert.equal(untouched?.status, "failed");
+  assert.equal(untouched?.error, "Horizon timeout");
+
+  // Horizon recovers: the next pass corrects the record.
+  next = "confirmed";
+  const second = await reconciler.reconcileFailedActivities();
+  assert.equal(second.corrected, 1);
+  const corrected = await activityStore.get(activity.id);
+  assert.equal(corrected?.status, "submitted");
+});
+
+test("Reconciler #277: provider throws → unchanged and counted, retried later", async () => {
+  const activityStore = new InMemoryActivityStore();
+  const activity = makeActivity({
+    status: "failed",
+    txHash: "tx-277-throw",
+    error: "Horizon timeout",
+  });
+  await activityStore.record(activity);
+
+  let throwing = true;
+  const provider = {
+    getStatus: async () => {
+      if (throwing) throw new Error("boom");
+      return "confirmed" as const;
+    },
+  };
+  const { reconciler } = makeFailedActivityReconciler(activityStore, provider);
+
+  const first = await reconciler.reconcileFailedActivities();
+  assert.equal(first.checked, 1);
+  assert.equal(first.errors, 1);
+  assert.equal(first.corrected, 0);
+  const untouched = await activityStore.get(activity.id);
+  assert.equal(untouched?.status, "failed");
+  assert.equal(untouched?.error, "Horizon timeout");
+
+  throwing = false;
+  const second = await reconciler.reconcileFailedActivities();
+  assert.equal(second.corrected, 1);
+  assert.equal(second.errors, 0);
+});
+
+test("Reconciler #277: failed without txHash → skipped", async () => {
+  const activityStore = new InMemoryActivityStore();
+  const activity = makeActivity({ status: "failed", txHash: null, error: "simulation failed" });
+  await activityStore.record(activity);
+
+  const provider = { getStatus: async () => "confirmed" as const };
+  const { reconciler } = makeFailedActivityReconciler(activityStore, provider);
+
+  const result = await reconciler.reconcileFailedActivities();
+  assert.equal(result.checked, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.corrected, 0);
+
+  const untouched = await activityStore.get(activity.id);
+  assert.equal(untouched?.status, "failed");
+  assert.equal(untouched?.error, "simulation failed");
+});
+
+test("Reconciler #277: already-corrected record is a no-op on re-run", async () => {
+  const activityStore = new InMemoryActivityStore();
+  const activity = makeActivity({
+    status: "failed",
+    txHash: "tx-277-done",
+    error: "Horizon timeout",
+  });
+  await activityStore.record(activity);
+
+  const provider = { getStatus: async () => "confirmed" as const };
+  const { reconciler } = makeFailedActivityReconciler(activityStore, provider);
+
+  const first = await reconciler.reconcileFailedActivities();
+  assert.equal(first.corrected, 1);
+
+  // The record is no longer `failed`, so the next pass has nothing to do.
+  const second = await reconciler.reconcileFailedActivities();
+  assert.equal(second.checked, 0);
+  assert.equal(second.corrected, 0);
+  assert.equal(second.ambiguous, 0);
+  assert.equal(second.errors, 0);
+  const still = await activityStore.get(activity.id);
+  assert.equal(still?.status, "submitted");
+});
+
+test("Reconciler #277: on-chain failed → error annotated, stays failed, no duplicate annotation", async () => {
+  const activityStore = new InMemoryActivityStore();
+  const activity = makeActivity({
+    status: "failed",
+    txHash: "tx-277-onchain-fail",
+    error: "Horizon timeout",
+  });
+  await activityStore.record(activity);
+
+  const provider = { getStatus: async () => "failed" as const };
+  const { reconciler } = makeFailedActivityReconciler(activityStore, provider);
+
+  const first = await reconciler.reconcileFailedActivities();
+  assert.equal(first.checked, 1);
+  assert.equal(first.onChainFailed, 1);
+  assert.equal(first.corrected, 0);
+
+  const afterFirst = await activityStore.get(activity.id);
+  assert.equal(afterFirst?.status, "failed");
+  assert.match(afterFirst?.error ?? "", /Transaction failed on-chain/);
+
+  const second = await reconciler.reconcileFailedActivities();
+  assert.equal(second.onChainFailed, 0);
+  const afterSecond = await activityStore.get(activity.id);
+  assert.equal(afterSecond?.error, afterFirst?.error);
+});
+
+test("Reconciler #277: no activityStore → pass is a no-op", async () => {
+  const executionStore = new InMemoryExecutionStore();
+  const provider = { getStatus: async () => "confirmed" as const };
+  const reconciler = new TransactionStatusReconciler(executionStore, provider, {
+    intervalMs: 60000,
+  });
+
+  const result = await reconciler.reconcileFailedActivities();
+  assert.equal(result.checked, 0);
+  assert.equal(result.corrected, 0);
+  assert.equal(result.ambiguous, 0);
+  assert.equal(result.errors, 0);
+});
+
+test("Reconciler #277: non-failed activities are ignored", async () => {
+  const activityStore = new InMemoryActivityStore();
+  const submitted = makeActivity({ status: "submitted", txHash: "tx-277-live" });
+  await activityStore.record(submitted);
+
+  const provider = { getStatus: async () => "confirmed" as const };
+  const { reconciler } = makeFailedActivityReconciler(activityStore, provider);
+
+  const result = await reconciler.reconcileFailedActivities();
+  assert.equal(result.checked, 0);
+  assert.equal(result.corrected, 0);
+  const untouched = await activityStore.get(submitted.id);
+  assert.equal(untouched?.status, "submitted");
+  assert.equal(untouched?.error, null);
 });
