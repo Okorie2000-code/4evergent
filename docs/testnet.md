@@ -271,7 +271,7 @@ The API server runs three background worker loops whose polling intervals can be
 
 **Operational tuning trade-offs:**
 - **Horizon load vs. latency:** Both the **reconciliation** worker and the **execution queue** contact Horizon. Lowering `RECONCILIATION_INTERVAL_MS` or `EXECUTION_QUEUE_INTERVAL_MS` shortens confirmation and pickup latency (useful in interactive Testnet demos) but increases outbound Horizon request volume.
-- **High-frequency scheduler polling (e.g. 1 second):** Setting `SCHEDULER_INTERVAL_MS=1000` polls the schedule store every second. It will not double-fire a schedule (because `nextRunAt` is advanced atomically via compare-and-swap before execution), but since cron expressions have one-minute resolution, sub-minute polling only reduces trigger jitter at the cost of extra SQLite reads.
+- **High-frequency scheduler polling (e.g. 1 second):** Setting `SCHEDULER_INTERVAL_MS=1000` polls the schedule store every second. It will not double-fire a schedule (because `runSchedule()` atomically claims the run via the `lastStartedAt` in-progress compare-and-swap marker before execution and advances `nextRunAt` after the callback completes), but since cron expressions have one-minute resolution, sub-minute polling only reduces trigger jitter at the cost of extra SQLite reads.
 - The startup log lines (`[reconciler] started, interval: ...`, `[execution-queue] started, interval: ...`, `[scheduler] started, interval: ...`) report the effective values at boot.
 
 ## Transaction fees
