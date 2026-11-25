@@ -227,7 +227,7 @@ curl -X POST http://localhost:3000/agents/<agent-id>/schedules/<schedule-id>/res
 curl -X POST http://localhost:3000/agents/<agent-id>/schedules/<schedule-id>/disable
 ```
 
-Schedules are stored in SQLite (when `dbPath` is configured) or in-memory. The scheduler polls every 60 seconds by default. Failed schedules do not stop the scheduler. The scheduler, execution queue and reconciliation worker intervals are configurable via `SCHEDULER_INTERVAL_MS`, `EXECUTION_QUEUE_INTERVAL_MS` (default 10s) and `RECONCILIATION_INTERVAL_MS` (default 30s); see [docs/testnet.md](docs/testnet.md#worker-intervals).
+Schedules are stored in SQLite (when `dbPath` is configured) or in-memory. The scheduler polls every 60 seconds by default. Failed schedules do not stop the scheduler. The scheduler (`SCHEDULER_INTERVAL_MS`, default 60s; opt-in via `SCHEDULER_ENABLED=1`), execution queue (`EXECUTION_QUEUE_INTERVAL_MS`, default 10s; always enabled in `server.ts`), and reconciliation worker (`RECONCILIATION_INTERVAL_MS`, default 30s; always enabled in `server.ts`) intervals are configurable via environment variables — note that the reconciler and execution queue contact Horizon when work is pending, so lowering their intervals increases external Horizon load; see `.env.example` ("Background workers") and [docs/testnet.md](docs/testnet.md#worker-intervals).
 
 ### Missed runs
 
