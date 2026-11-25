@@ -417,6 +417,14 @@ async function main() {
       reconciliation: { enabled: true, intervalMs: workerIntervals.reconciliationIntervalMs, maxAgeMs: workerIntervals.reconciliationMaxAgeMs },
       authProvider,
       authModule,
+      // #261: per-owner rate limiting for intent submission and approve /
+      // reject (API_RATE_LIMIT_* env vars; defaults 60 attempts / 60s /
+      // 10000 keys, see DEFAULT_API_RATE_LIMIT_* in index.ts).
+      rateLimit: {
+        maxAttempts: envPositiveInt(process.env.API_RATE_LIMIT_MAX),
+        windowSeconds: envPositiveInt(process.env.API_RATE_LIMIT_WINDOW_SECONDS),
+        maxKeys: envPositiveInt(process.env.API_RATE_LIMIT_MAX_KEYS),
+      },
       corsOrigin: webOrigin,
     });
 

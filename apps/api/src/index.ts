@@ -65,6 +65,7 @@ import {
 } from "@4evergent/database";
 import type { PolicyRules, Agent, RequestContext, AuthorizationService, AuthProvider, AuthenticatedPrincipal } from "@4evergent/shared";
 import { createAuthModule, type PrincipalResolution } from "./auth.js";
+import { SlidingWindowRateLimiter } from "./rate-limit.js";
 import { sweepRetainedData } from "./data-retention.js";
 
 const require = createRequire(import.meta.url);
@@ -84,6 +85,22 @@ const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
  * recreate the very bug this constant exists to prevent).
  */
 export const STUCK_EXECUTION_THRESHOLD_MS = 10 * 60_000;
+
+/**
+ * #261: defaults for the per-owner rate limit on the authenticated,
+ * money-moving endpoints (intent submission, approve, reject). Same shape
+ * as the auth credential-endpoint limit, but a higher budget: these
+ * endpoints serve legitimate automation, so the default allows a burst of
+ * 60 requests per owner per minute. Override with the `rateLimit` server
+ * option (`API_RATE_LIMIT_*` env vars in server.ts).
+ */
+export const DEFAULT_API_RATE_LIMIT_MAX = 60;
+export const DEFAULT_API_RATE_LIMIT_WINDOW_SECONDS = 60;
+export const DEFAULT_API_RATE_LIMIT_MAX_KEYS = 10_000;
+
+function positiveNumber(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
 
 interface IntentResponse {
   activityId: string;
@@ -209,6 +226,22 @@ export interface ServerOptions {
   /** User authentication module (sessions: email / Google / Stellar wallet). */
   authModule?: ReturnType<typeof createAuthModule>;
   /**
+   * #261: per-owner rate limiting for the authenticated intent and
+   * approval-action endpoints (POST /agents/:id/intents, approve, reject).
+   * Same `{ maxAttempts, windowSeconds, maxKeys }` shape as the auth
+   * module's credential-endpoint limit; each endpoint gets its own limiter
+   * instance so one endpoint's traffic cannot lock an owner out of another.
+   * Defaults: 60 attempts / 60s / 10000 keys (see DEFAULT_API_RATE_LIMIT_*).
+   */
+  rateLimit?: {
+    /** Attempts allowed per window, per owner. Default 60. */
+    maxAttempts?: number;
+    /** Window length in seconds. Default 60. */
+    windowSeconds?: number;
+    /** Hard cap on tracked owners. Default 10000. */
+    maxKeys?: number;
+  };
+  /**
    * #109: Idempotency-Key replay window in ms (default 24 hours). Applies to
    * the activity store this server creates; an injected `activityStore`
    * keeps its own window. Also bounds the retention sweep's key release.
@@ -276,6 +309,39 @@ export async function createApiServer(options: ServerOptions) {
   // the bearer AuthProvider remains the machine/API-key fallback.
   const authProvider = options.authProvider;
   const authModule = options.authModule ?? null;
+
+  // #261: per-owner rate limiting for the authenticated, money-moving
+  // endpoints. One limiter instance per endpoint (same pattern as the auth
+  // module's per-endpoint limiters) so intent traffic cannot lock an owner
+  // out of approve/reject, or vice versa. Keyed by ownerId, never global
+  // across owners. The gate runs before body parsing so floods are shed
+  // early, like the auth credential gate.
+  const apiRateLimitConfig = {
+    maxAttempts: positiveNumber(options.rateLimit?.maxAttempts, DEFAULT_API_RATE_LIMIT_MAX),
+    windowMs: positiveNumber(options.rateLimit?.windowSeconds, DEFAULT_API_RATE_LIMIT_WINDOW_SECONDS) * 1000,
+    maxKeys: positiveNumber(options.rateLimit?.maxKeys, DEFAULT_API_RATE_LIMIT_MAX_KEYS),
+  };
+  const intentLimiter = new SlidingWindowRateLimiter(apiRateLimitConfig);
+  const approveLimiter = new SlidingWindowRateLimiter(apiRateLimitConfig);
+  const rejectLimiter = new SlidingWindowRateLimiter(apiRateLimitConfig);
+
+  /**
+   * Check the per-owner limit for one endpoint. Returns true when the
+   * request may proceed (and records the attempt), or false after writing
+   * a 429 with a Retry-After header and the standard `{ code, error }`
+   * envelope when the limit is exceeded.
+   */
+  function rateLimitGate(limiter: SlidingWindowRateLimiter, ctx: RequestContext, res: any): boolean {
+    const key = `owner:${ctx.ownerId}`;
+    const decision = limiter.check(key);
+    if (decision.limited) {
+      res.writeHead(429, { "Content-Type": "application/json", "Retry-After": String(decision.retryAfterSeconds) });
+      res.end(JSON.stringify({ code: "RATE_LIMITED", error: API_ERRORS.RATE_LIMITED.message }));
+      return false;
+    }
+    limiter.record(key);
+    return true;
+  }
   const als = new AsyncLocalStorage<RequestContext>();
 
   async function authenticateRequest(req: any, method: string): Promise<PrincipalResolution> {
@@ -2197,6 +2263,8 @@ export async function createApiServer(options: ServerOptions) {
   }
 
   async function handleIntent(ctx: RequestContext, req: any, res: any) {
+    // #261: per-owner rate limit, checked before body parsing.
+    if (!rateLimitGate(intentLimiter, ctx, res)) return;
     const agentId = extractAgentId(req.url);
     if (!agentId) return apiError(res, "INVALID_PATH_PARAM");
 
@@ -2371,6 +2439,8 @@ export async function createApiServer(options: ServerOptions) {
   }
 
   async function handleApprove(ctx: RequestContext, req: any, res: any) {
+    // #261: per-owner rate limit, checked before body parsing.
+    if (!rateLimitGate(approveLimiter, ctx, res)) return;
     const approvalId = extractApprovalId(req.url);
     if (!approvalId) return apiError(res, "INVALID_PATH_PARAM");
 
@@ -2504,6 +2574,8 @@ export async function createApiServer(options: ServerOptions) {
   }
 
   async function handleReject(ctx: RequestContext, req: any, res: any) {
+    // #261: per-owner rate limit, checked before body parsing.
+    if (!rateLimitGate(rejectLimiter, ctx, res)) return;
     const approvalId = extractApprovalId(req.url);
     if (!approvalId) return apiError(res, "INVALID_PATH_PARAM");
 
