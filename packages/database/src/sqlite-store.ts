@@ -212,10 +212,15 @@ export class SQLiteActivityStore implements ActivityStore {
     return row ? rowToActivityRecord(row as unknown as ActivityRow) : null;
   }
 
-  async listByAgent(agentId: string, limit = 50, offset = 0): Promise<ActivityRecord[]> {
+  async listByAgent(agentId: string, limit = 50, offset = 0, status?: string): Promise<ActivityRecord[]> {
+    const safeLimit = clampLimit(limit);
+    const safeOffset = clampOffset(offset);
+    const where = status === undefined ? "WHERE agent_id = ?" : "WHERE agent_id = ? AND status = ?";
+    const params =
+      status === undefined ? [agentId, safeLimit, safeOffset] : [agentId, status, safeLimit, safeOffset];
     const rows = this.db
-      .prepare("SELECT * FROM activities WHERE agent_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?")
-      .all(agentId, clampLimit(limit), clampOffset(offset));
+      .prepare(`SELECT * FROM activities ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .all(...params);
     return rows.map((r) => rowToActivityRecord(r as unknown as ActivityRow));
   }
 
@@ -233,10 +238,15 @@ export class SQLiteActivityStore implements ActivityStore {
     return rows.map((r) => rowToActivityRecord(r as unknown as ActivityRow));
   }
 
-  async listByOwner(ownerId: string, limit = 50, offset = 0): Promise<ActivityRecord[]> {
+  async listByOwner(ownerId: string, limit = 50, offset = 0, status?: string): Promise<ActivityRecord[]> {
+    const safeLimit = clampLimit(limit);
+    const safeOffset = clampOffset(offset);
+    const where = status === undefined ? "WHERE owner_id = ?" : "WHERE owner_id = ? AND status = ?";
+    const params =
+      status === undefined ? [ownerId, safeLimit, safeOffset] : [ownerId, status, safeLimit, safeOffset];
     const rows = this.db
-      .prepare("SELECT * FROM activities WHERE owner_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?")
-      .all(ownerId, clampLimit(limit), clampOffset(offset));
+      .prepare(`SELECT * FROM activities ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .all(...params);
     return rows.map((r) => rowToActivityRecord(r as unknown as ActivityRow));
   }
 

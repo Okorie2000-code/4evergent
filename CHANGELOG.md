@@ -23,6 +23,7 @@ All notable changes to this project are recorded in this file.
 - Horizon pre-check mitigation before blind retry — guards against duplicate submission when original transaction may have reached Horizon (Phase 18C)
 
 ### Added
+- `?status=` filtering on the schedule and activity list endpoints (`GET /agents/:id/schedules`, `GET /agents/:id/activity`, `GET /activity`), reusing the approval `parseStatusFilter` pattern with store-level filtering in both the in-memory and SQLite stores (#263)
 - Persistent agent policy configuration (`PolicyConfigStore`, `SQLitePolicyConfigStore`) with monotonic versioning (Phase 28A)
 - Policy resolver callback support in `PolicyEngine` and `TransactionPipeline` (Phase 28A, 28J)
 - `PolicyEngine.evaluateWithoutReservation()` for policy check re-evaluation on approved intents (Phase 28J)

@@ -701,6 +701,14 @@
               "default": 50
             },
             "description": "Clamped to 1-100."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -811,6 +819,14 @@
               "default": 50
             },
             "description": "Clamped to 1-100."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1071,6 +1087,14 @@
               "default": 50
             },
             "description": "Clamped to 1-100."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
