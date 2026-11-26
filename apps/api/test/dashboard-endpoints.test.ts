@@ -162,6 +162,10 @@ test("GET /overview/attention counts statuses for the authenticated owner only",
     await approvalStore.record(makeApproval("owner-a", "pending-a"));
     await approvalStore.record(makeApproval("owner-a", "approved-a", "approved"));
     await approvalStore.record(makeApproval("owner-b", "pending-b"));
+
+    const now = new Date().toISOString();
+    const oldStartedAt = new Date(Date.now() - STUCK_EXECUTION_THRESHOLD_MS - 5_000).toISOString();
+
     for (const [id, status] of [
       ["queued-a", "queued"],
       ["executing-a", "executing"],
@@ -175,19 +179,35 @@ test("GET /overview/attention counts statuses for the authenticated owner only",
       await executionStore.record(makeExecution(id === "failed-b" ? "owner-b" : "owner-a", id, status));
     }
 
+    // #359 corrected definition — a failed execution that has a scheduled
+    // retry and a transient errorClass qualifies as retrying (not a queued one).
+    // Keep owner-b exclusion: failed-retry-b must not bleed into owner-a counts.
+    await executionStore.record(makeExecution("owner-a", "failed-retry-a", "failed", {
+      nextRetryAt: now, errorClass: "transient", attempt: 1,
+    }));
+    await executionStore.record(makeExecution("owner-b", "failed-retry-b", "failed", {
+      nextRetryAt: now, errorClass: "transient", attempt: 1,
+    }));
+
+    // executing-a has startedAt = null (age unknown) → not stuck.
+    // Seed a genuinely old executing record for owner-a to get stuckExecutions: 1.
+    await executionStore.record(makeExecution("owner-a", "executing-old-a", "executing", {
+      startedAt: oldStartedAt,
+    }));
+
     const response = await request(baseUrl, "/overview/attention");
     assert.equal(response.status, 200);
-    // #359: retrying and stuck are definitional, not status-derived. The
-    // fixture is intentionally unchanged from before the fix, so a regression
-    // that reinstates the old mislabel will turn this test red:
-    //   - queued-a is healthy (never failed) → not retrying
-    //   - executing-a has startedAt = null → not stuck (age unknown)
     assert.deepEqual(response.body, {
       pendingApprovals: 1,
-      failedExecutions: 1,
+      // failed-a + failed-retry-a = 2 for owner-a (failed-b is owner-b)
+      failedExecutions: 2,
       deadLetterExecutions: 1,
-      retryingExecutions: 0,
-      stuckExecutions: 0,
+      // Only failed-retry-a: failed + nextRetryAt set + transient errorClass.
+      // queued-a does not qualify (never failed). failed-retry-b is owner-b.
+      retryingExecutions: 1,
+      // executing-old-a is older than the stuck threshold; executing-a has
+      // null startedAt so age is unknown and it is excluded.
+      stuckExecutions: 1,
     });
   } finally {
     await close();
