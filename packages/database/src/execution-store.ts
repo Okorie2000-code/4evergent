@@ -98,6 +98,16 @@ export class InMemoryExecutionStore implements ExecutionStore {
     return result;
   }
 
+  async countRetryingByOwner(ownerId: string): Promise<number> {
+    let count = 0;
+    for (const r of this.records.values()) {
+      if (r.ownerId === ownerId && r.status === "failed" && r.nextRetryAt !== null) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   async update(id: string, patch: Partial<ExecutionRecord>): Promise<ExecutionRecord | null> {
     const existing = this.records.get(id);
     if (!existing) return null;
@@ -410,6 +420,15 @@ export class SQLiteExecutionStore implements ExecutionStore {
       if (s in result) result[s] = row.count;
     }
     return result;
+  }
+
+  async countRetryingByOwner(ownerId: string): Promise<number> {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) as count FROM executions WHERE owner_id = ? AND status = 'failed' AND next_retry_at IS NOT NULL"
+      )
+      .get(ownerId) as unknown as { count: number };
+    return row?.count ?? 0;
   }
 
   async update(id: string, patch: Partial<ExecutionRecord>): Promise<ExecutionRecord | null> {

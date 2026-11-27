@@ -44,6 +44,7 @@ function statusClass(status: ExecutionStatus): string {
   }
 }
 
+// inferRetrying is kept for per-row badge rendering only (unchanged per #383).
 function inferRetrying(e: ExecutionRecord): boolean {
   return e.status === 'failed' && e.nextRetryAt !== null && e.errorClass === 'transient';
 }
@@ -54,6 +55,9 @@ export default function Executions({ onExecutionClick }: { onExecutionClick?: (i
   const [nextOffset, setNextOffset] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [queue, setQueue] = useState<QueueSummary | null>(null);
+  // #383: server-side retrying count from GET /overview/attention, same
+  // definition as Overview ("failed executions with a scheduled retry").
+  const [serverRetryingCount, setServerRetryingCount] = useState<number | null>(null);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [error, setError] = useState<string | null>(null);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
@@ -76,14 +80,16 @@ export default function Executions({ onExecutionClick }: { onExecutionClick?: (i
   const loadInitial = useCallback(async () => {
     setLoading(true);
     try {
-      const [r, q] = await Promise.all([
+      const [r, q, attention] = await Promise.all([
         api.listAllExecutions(PAGE_SIZE, 0),
         api.getQueueStatus(),
+        api.getOverviewAttention(),
       ]);
       setExecutions(r.executions);
       setHasMore(r.hasMore);
       setNextOffset(r.executions.length);
       setQueue(q);
+      setServerRetryingCount(attention.retryingExecutions);
     } catch (e: any) {
       setError(e.message ?? 'Failed to load executions');
     } finally {
@@ -119,8 +125,6 @@ export default function Executions({ onExecutionClick }: { onExecutionClick?: (i
     ? executions
     : executions.filter((e) => e.status === filter || (filter === 'failed' && inferRetrying(e)));
 
-  const retryingCount = executions.filter(inferRetrying).length;
-
   return (
     <section>
       <h1>Executions</h1>
@@ -130,7 +134,10 @@ export default function Executions({ onExecutionClick }: { onExecutionClick?: (i
           <Card title="Queue Running" value={queue.running ? 'Yes' : 'No'} />
           <Card title="Queued" value={String(queue.byStatus['queued'] ?? 0)} />
           <Card title="Executing" value={String(queue.byStatus['executing'] ?? 0)} />
-          <Card title="Retrying" value={String(retryingCount)} />
+          {/* #383: Retrying count comes from the server-side overview/attention
+              endpoint (failed executions with a scheduled retry), not from
+              counting the loaded page. This matches Overview's definition. */}
+          <Card title="Retrying" value={serverRetryingCount !== null ? String(serverRetryingCount) : '—'} />
           <Card title="Failed" value={String(queue.byStatus['failed'] ?? 0)} />
           <Card title="Dead Letter" value={String(queue.byStatus['dead_letter'] ?? 0)} />
         </div>

@@ -66,6 +66,13 @@ export interface ExecutionStore {
   listSubmitted(limit?: number): Promise<ExecutionRecord[]>;
   /** Count executions grouped by status for an owner. */
   countByOwner(ownerId: string): Promise<Record<ExecutionStatus, number>>;
+  /**
+   * Count executions that are awaiting a scheduled retry for an owner.
+   * Definition: status === 'failed' AND nextRetryAt IS NOT NULL.
+   * This is the canonical "retrying" count shared by the Overview and
+   * Executions pages (fixes #383 / aligns with #359).
+   */
+  countRetryingByOwner(ownerId: string): Promise<number>;
   update(id: string, patch: Partial<ExecutionRecord>): Promise<ExecutionRecord | null>;
   updateIfStatus(id: string, expectedStatus: ExecutionStatus, patch: Partial<ExecutionRecord>): Promise<ExecutionRecord | null>;
   delete(id: string): Promise<boolean>;

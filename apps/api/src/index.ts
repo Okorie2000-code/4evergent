@@ -1726,11 +1726,17 @@ export async function createApiServer(options: ServerOptions) {
     const pendingApprovals = await approvals.countByOwner(ownerId, "pending_approval");
     const execCounts: Record<ExecutionStatus, number> =
       await executionStore.countByOwner(ownerId);
+    // #383 / #359: retryingExecutions is the count of executions in status
+    // 'failed' with a scheduled retry (nextRetryAt != null), matching the
+    // definition used by the Executions page card. This replaces the previous
+    // execCounts.queued which mislabelled healthy queued executions as
+    // "Retrying".
+    const retryingExecutions = await executionStore.countRetryingByOwner(ownerId);
     return json(res, {
       pendingApprovals,
       failedExecutions: execCounts.failed ?? 0,
       deadLetterExecutions: execCounts.dead_letter ?? 0,
-      retryingExecutions: execCounts.queued ?? 0,
+      retryingExecutions,
       stuckExecutions: execCounts.executing ?? 0,
     });
   }
